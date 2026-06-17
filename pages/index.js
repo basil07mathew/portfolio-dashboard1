@@ -3,10 +3,9 @@ import Head from 'next/head';
 
 export default function Dashboard() {
   const [holdings, setHoldings] = useState([]);
-  const [summaryAssets, setSummaryAssets] = useState([]);
-  const [summaryLiabilities, setSummaryLiabilities] = useState([]);
+  const [loans, setLoans] = useState([]);
   const [stats, setStats] = useState({ 
-    totalInvested: 0, currentValue: 0, unrealisedPnL: 0, netWorth: 0 
+    totalInvested: 0, currentValue: 0, unrealisedPnL: 0, totalHoldings: 0, totalLoan: 0 
   });
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -21,10 +20,10 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  // Helper to safely parse numbers, ignoring ₹, commas, and % signs
+  // Helper to safely parse numbers formatted with commas or currency symbols
   const parseSheetNumber = (val) => {
     if (!val) return 0;
-    const cleanStr = val.toString().replace(/[₹,%\s]/g, '');
+    const cleanStr = val.toString().replace(/[₹,%]/g, '').trim();
     return parseFloat(cleanStr) || 0;
   };
 
@@ -33,100 +32,78 @@ export default function Dashboard() {
       setLoading(true);
       setError(null);
 
-      // Fetch Holdings and Summary concurrently
-      const [holdingsRes, summaryRes] = await Promise.all([
+      // Fetch all three sheets concurrently
+      const [holdingsRes, summaryRes, loansRes] = await Promise.all([
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/Holdings?key=${API_KEY}`),
-        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/Summary?key=${API_KEY}`)
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/Summary?key=${API_KEY}`),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/Loans?key=${API_KEY}`)
       ]);
       
-      if (!holdingsRes.ok || !summaryRes.ok) {
+      if (!holdingsRes.ok || !summaryRes.ok || !loansRes.ok) {
         throw new Error('API Error: Ensure Sheet ID, API Key, and Sheet names are correct and the sheet is public.');
       }
 
       const holdingsData = await holdingsRes.json();
       const summaryData = await summaryRes.json();
+      const loansData = await loansRes.json();
 
-      // 1. PARSE HOLDINGS & CALCULATE REAL P&L
-      let calcTotalInvested = 0;
-      let calcCurrentValue = 0;
-
+      // 1. PARSE HOLDINGS (Based on exact Excel columns)
       if (holdingsData.values && holdingsData.values.length > 1) {
         const holdingsRows = holdingsData.values.slice(1);
         const parsedHoldings = holdingsRows
-          .filter(row => row[0]) 
-          .map(row => {
-            const quantity = parseSheetNumber(row[3]);     // Col D
-            const avgPrice = parseSheetNumber(row[4]);     // Col E
-            const currentPrice = parseSheetNumber(row[5]); // Col F
-
-            // Force calculate Real P&L to guarantee accuracy
-            const invested = quantity * avgPrice;
-            const current = quantity * currentPrice;
-            const pnl = current - invested;
-            const pnlPercent = invested > 0 ? (pnl / invested) * 100 : 0;
-
-            calcTotalInvested += invested;
-            calcCurrentValue += current;
-
-            return {
-              symbol: row[0]?.toString() || '',
-              sector: row[1]?.toString() || '',
-              quantity,
-              avgPrice,
-              currentPrice,
-              invested,
-              current,
-              pnl,
-              pnlPercent,
-              notes: row[10]?.toString() || '', // Col K
-            };
-          });
+          .filter(row => row[0]) // Filter empty rows
+          .map(row => ({
+            symbol: row[0]?.toString() || '',          // Col A
+            sector: row[1]?.toString() || '',          // Col B
+            quantity: parseSheetNumber(row[3]),        // Col D
+            avgPrice: parseSheetNumber(row[4]),        // Col E
+            currentPrice: parseSheetNumber(row[5]),    // Col F
+            invested: parseSheetNumber(row[6]),        // Col G
+            current: parseSheetNumber(row[7]),         // Col H
+            pnl: parseSheetNumber(row[8]),             // Col I
+            pnlPercent: parseSheetNumber(row[9]),      // Col J
+            notes: row[10]?.toString() || '',          // Col K
+          }));
 
         setHoldings(parsedHoldings);
       }
 
-      // 2. PARSE SUMMARY (Split into Assets and Liabilities)
-      let totalAssetsVal = 0;
-      let totalLiabilitiesVal = 0;
-
+      // 2. PARSE SUMMARY (Directly pulling stats from the Summary sheet)
       if (summaryData.values && summaryData.values.length > 1) {
         const summaryRows = summaryData.values.slice(1);
-        const assets = [];
-        const liabilities = [];
-
+        const summaryObj = {};
+        
+        // Convert summary rows into a key-value object
         summaryRows.forEach(row => {
-          // Left Side: Assets (Assumes Col A = Name, Col B = Value)
           if (row[0] && row[1]) {
-            const name = row[0].toString().trim();
-            const val = parseSheetNumber(row[1]);
-            if (name.toLowerCase() !== 'total' && name !== '') {
-              assets.push({ name, value: val });
-              totalAssetsVal += val;
-            }
-          }
-
-          // Right Side: Liabilities/Credit Cards (Assumes Col D = Name, Col E = Value)
-          // Note: If there is no empty gap column C in your sheet, change row[3] to row[2] and row[4] to row[3]
-          if (row[3] && row[4]) {
-            const name = row[3].toString().trim();
-            const val = parseSheetNumber(row[4]);
-            if (name.toLowerCase() !== 'total' && name !== '') {
-              liabilities.push({ name, value: val });
-              totalLiabilitiesVal += val;
-            }
+            summaryObj[row[0].trim()] = parseSheetNumber(row[1]);
           }
         });
 
-        setSummaryAssets(assets);
-        setSummaryLiabilities(liabilities);
+        setStats({
+          totalInvested: summaryObj['Total Invested (₹)'] || 0,
+          currentValue: summaryObj['Current Value (₹)'] || 0,
+          unrealisedPnL: summaryObj['Unrealised P&L'] || 0,
+          totalHoldings: summaryObj['Total Holdings'] || 0,
+          totalLoan: summaryObj['Total Outstanding Loan'] || 0
+        });
       }
 
-      setStats({
-        totalInvested: calcTotalInvested,
-        currentValue: calcCurrentValue,
-        unrealisedPnL: calcCurrentValue - calcTotalInvested,
-        netWorth: totalAssetsVal - totalLiabilitiesVal
-      });
+      // 3. PARSE LOANS
+      if (loansData.values && loansData.values.length > 1) {
+        const loansRows = loansData.values.slice(1);
+        const parsedLoans = loansRows
+          .filter(row => row[0])
+          .map(row => ({
+            provider: row[0]?.toString() || '',      // Col A
+            principal: parseSheetNumber(row[1]),     // Col B
+            interestRate: parseSheetNumber(row[2]),  // Col C
+            outstanding: parseSheetNumber(row[3]),   // Col D
+            status: row[4]?.toString() || '',        // Col E
+          }));
+        
+        setLoans(parsedLoans);
+      }
 
       setLastUpdated(new Date().toLocaleString('en-IN'));
       setLoading(false);
@@ -155,7 +132,7 @@ export default function Dashboard() {
         <title>Portfolio Dashboard</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <style>{`
-          /* Core Variables */
+          /* === KEEP YOUR EXACT EXISTING CSS STYLES HERE === */
           :root {
             --bg: #0a0a0f;
             --bg2: #111118;
@@ -166,21 +143,18 @@ export default function Dashboard() {
             --accent: #f0b429;
             --accent2: #4ade80;
             --accent3: #f87171;
+            --accent4: #60a5fa;
           }
           * { margin: 0; padding: 0; box-sizing: border-box; }
           html { scroll-behavior: smooth; }
           body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 14px; line-height: 1.6; }
           .container { max-width: 1400px; margin: 0 auto; padding: 0 24px; }
-          
-          /* Headers & Buttons */
           header { padding: 40px 0 30px; border-bottom: 1px solid var(--border); margin-bottom: 40px; }
           h1 { font-family: 'Playfair Display', serif; font-size: clamp(28px, 5vw, 48px); font-weight: 900; margin-bottom: 16px; }
           .header-controls { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; margin-bottom: 20px; }
           .header-info { display: flex; gap: 24px; font-size: 12px; color: var(--muted); }
           .refresh-btn { background: var(--accent); color: var(--bg); border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; }
           .error-box { background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.3); color: #fca5a5; padding: 16px; border-radius: 8px; margin-bottom: 24px; }
-          
-          /* Stats Grid */
           .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 32px; }
           .stat-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 12px; padding: 20px; position: relative; }
           .stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--accent); transform: scaleX(0); transition: transform 0.2s; }
@@ -193,12 +167,6 @@ export default function Dashboard() {
           .stat-value.red { color: var(--accent3); }
           .stat-value.gold { color: var(--accent); }
           .stat-sub { font-size: 11px; color: var(--muted); margin-top: 8px; }
-          
-          /* Split Summary Layout */
-          .split-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
-          @media (max-width: 768px) { .split-grid { grid-template-columns: 1fr; } }
-          
-          /* Tables */
           .table-wrapper { background: var(--bg3); border: 1px solid var(--border); border-radius: 12px; overflow-x: auto; margin-bottom: 32px; }
           table { width: 100%; border-collapse: collapse; }
           th { background: var(--bg2); padding: 14px 16px; text-align: left; font-size: 11px; color: var(--muted); text-transform: uppercase; border-bottom: 1px solid var(--border); }
@@ -206,11 +174,9 @@ export default function Dashboard() {
           .mono { font-family: 'DM Mono', monospace; }
           .text-green { color: var(--accent2); }
           .text-red { color: var(--accent3); }
-          
-          /* Typography */
           section { padding: 32px 0; border-bottom: 1px solid var(--border); }
-          section:last-child { border-bottom: none; }
-          section h2 { font-family: 'Playfair Display', serif; font-size: 24px; margin-bottom: 24px; }
+          section h2 { font-family: 'Playfair Display', serif; font-size: 24px; margin-bottom: 6px; }
+          .section-sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
         `}</style>
       </Head>
 
@@ -232,17 +198,19 @@ export default function Dashboard() {
 
         {!loading && (
           <>
-            {/* TOP STATS */}
-            <section style={{ paddingTop: 0 }}>
+            <section>
+              <h2>Portfolio Overview</h2>
               <div className="stats-grid">
                 <div className="stat-card">
-                  <div className="stat-label">Total Invested (Holdings)</div>
+                  <div className="stat-label">Total Invested</div>
                   <div className="stat-value gold">{formatCurrency(stats.totalInvested)}</div>
+                  <div className="stat-sub">{stats.totalHoldings} holdings</div>
                 </div>
 
                 <div className="stat-card">
-                  <div className="stat-label">Current Value (Holdings)</div>
+                  <div className="stat-label">Current Value</div>
                   <div className="stat-value">{formatCurrency(stats.currentValue)}</div>
+                  <div className="stat-sub">Market value</div>
                 </div>
 
                 <div className={`stat-card ${stats.unrealisedPnL >= 0 ? 'green' : 'red'}`}>
@@ -250,77 +218,25 @@ export default function Dashboard() {
                   <div className={`stat-value ${stats.unrealisedPnL >= 0 ? 'green' : 'red'}`}>
                     {stats.unrealisedPnL >= 0 ? '+' : ''}{formatCurrency(stats.unrealisedPnL)}
                   </div>
-                  <div className="stat-sub">{gainPercent}% return</div>
+                  <div className="stat-sub">{gainPercent}% gain</div>
                 </div>
 
-                <div className={`stat-card ${stats.netWorth >= 0 ? 'green' : 'red'}`}>
-                  <div className="stat-label">Estimated Net Worth</div>
-                  <div className={`stat-value ${stats.netWorth >= 0 ? 'green' : 'red'}`}>
-                    {formatCurrency(stats.netWorth)}
-                  </div>
-                  <div className="stat-sub">Assets minus Liabilities</div>
+                <div className="stat-card red">
+                  <div className="stat-label">Outstanding Loans</div>
+                  <div className="stat-value red">{formatCurrency(stats.totalLoan)}</div>
+                  <div className="stat-sub">{loans.length} Active Loans</div>
                 </div>
               </div>
             </section>
 
-            {/* SPLIT SUMMARY SECTION */}
             <section>
-              <h2>Financial Summary</h2>
-              <div className="split-grid">
-                {/* Assets Column */}
-                <div className="table-wrapper" style={{ marginBottom: 0 }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Asset Type</th>
-                        <th style={{ textAlign: 'right' }}>Value</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {summaryAssets.map((asset, idx) => (
-                        <tr key={idx}>
-                          <td><strong>{asset.name}</strong></td>
-                          <td className="mono text-green" style={{ textAlign: 'right' }}>
-                            {formatCurrency(asset.value)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Liabilities Column */}
-                <div className="table-wrapper" style={{ marginBottom: 0 }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Credit Card / Liability</th>
-                        <th style={{ textAlign: 'right' }}>Outstanding</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {summaryLiabilities.map((liability, idx) => (
-                        <tr key={idx}>
-                          <td><strong>{liability.name}</strong></td>
-                          <td className="mono text-red" style={{ textAlign: 'right' }}>
-                            {formatCurrency(liability.value)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </section>
-
-            {/* HOLDINGS DETAIL */}
-            <section>
-              <h2>Holdings Overview (Real P&L)</h2>
+              <h2>Holdings Details</h2>
               <div className="table-wrapper">
                 <table>
                   <thead>
                     <tr>
                       <th>Symbol</th>
+                      <th>Sector</th>
                       <th>Qty</th>
                       <th>Avg Price</th>
                       <th>LTP</th>
@@ -328,12 +244,14 @@ export default function Dashboard() {
                       <th>Current Val</th>
                       <th>P&L</th>
                       <th>% Ret</th>
+                      <th>Notes</th>
                     </tr>
                   </thead>
                   <tbody>
                     {sortedHoldings.map((holding, idx) => (
                       <tr key={idx}>
                         <td className="mono"><strong>{holding.symbol}</strong></td>
+                        <td>{holding.sector}</td>
                         <td className="mono">{holding.quantity}</td>
                         <td className="mono">₹{holding.avgPrice.toFixed(2)}</td>
                         <td className="mono">₹{holding.currentPrice.toFixed(2)}</td>
@@ -345,12 +263,43 @@ export default function Dashboard() {
                         <td className={`mono ${holding.pnlPercent >= 0 ? 'text-green' : 'text-red'}`}>
                           {holding.pnlPercent >= 0 ? '+' : ''}{holding.pnlPercent.toFixed(2)}%
                         </td>
+                        <td>{holding.notes}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </section>
+
+            {loans.length > 0 && (
+              <section>
+                <h2>Active Loans</h2>
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Loan Provider</th>
+                        <th>Principal Amount</th>
+                        <th>Interest Rate</th>
+                        <th>Outstanding Balance</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loans.map((loan, idx) => (
+                        <tr key={idx}>
+                          <td><strong>{loan.provider}</strong></td>
+                          <td className="mono">{formatCurrency(loan.principal)}</td>
+                          <td className="mono">{loan.interestRate}%</td>
+                          <td className="mono text-red">{formatCurrency(loan.outstanding)}</td>
+                          <td>{loan.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
           </>
         )}
       </div>
