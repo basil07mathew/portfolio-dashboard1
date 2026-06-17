@@ -85,7 +85,7 @@ export default function Dashboard() {
         setHoldings(parsedHoldings);
       }
 
-      // 2. PARSE SUMMARY (Assets: C&D, Liabilities: G&H)
+      // 2. PARSE SUMMARY (Split into Assets and Liabilities)
       let totalAssetsVal = 0;
       let totalLiabilitiesVal = 0;
 
@@ -95,20 +95,21 @@ export default function Dashboard() {
         const liabilities = [];
 
         summaryRows.forEach(row => {
-          // Assets: Columns C & D (row[2] and row[3])
-          if (row[2] && row[3]) {
-            const name = row[2].toString().trim();
-            const val = parseSheetNumber(row[3]);
+          // Left Side: Assets (Assumes Col A = Name, Col B = Value)
+          if (row[0] && row[1]) {
+            const name = row[0].toString().trim();
+            const val = parseSheetNumber(row[1]);
             if (name.toLowerCase() !== 'total' && name !== '') {
               assets.push({ name, value: val });
               totalAssetsVal += val;
             }
           }
 
-          // Liabilities/Credit Cards: Columns G & H (row[6] and row[7])
-          if (row[6] && row[7]) {
-            const name = row[6].toString().trim();
-            const val = parseSheetNumber(row[7]);
+          // Right Side: Liabilities/Credit Cards (Assumes Col D = Name, Col E = Value)
+          // Note: If there is no empty gap column C in your sheet, change row[3] to row[2] and row[4] to row[3]
+          if (row[3] && row[4]) {
+            const name = row[3].toString().trim();
+            const val = parseSheetNumber(row[4]);
             if (name.toLowerCase() !== 'total' && name !== '') {
               liabilities.push({ name, value: val });
               totalLiabilitiesVal += val;
