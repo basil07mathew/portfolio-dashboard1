@@ -11,8 +11,8 @@ export default function Dashboard() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [error, setError] = useState(null);
 
-  const SHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
-  const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+  const SHEET_ID = '1F6xHrJnrChEmvop-YOIycodgd133IjBAtliDljFM2EA';
+  const API_KEY = 'AIzaSyAqdKsVXtt1bhpptkV6Hm5tl1rvblivKHU';
 
   useEffect(() => {
     fetchData();
