@@ -9,9 +9,9 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
 
   // ⚠️ REPLACE THESE WITH YOUR VALUES
-  const SHEET_ID = 'YOUR_SHEET_ID_HERE'; // From Google Sheets URL
+  const SHEET_ID = '1F6xHrJnrChEmvop-YOIycodgd133IjBAtliDljFM2EA'; // From Google Sheets URL
   const SHEET_NAME = 'Holdings'; // Sheet name in Google Sheets
-  const API_KEY = 'YOUR_GOOGLE_API_KEY_HERE'; // From Google Cloud Console
+  const API_KEY = 'AIzaSyAqdKsVXtt1bhpptkV6Hm5tl1rvblivKHU'; // From Google Cloud Console
 
   useEffect(() => {
     fetchData();
